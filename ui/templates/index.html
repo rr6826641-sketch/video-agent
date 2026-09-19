@@ -1,0 +1,362 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Video Agent — Control Panel</title>
+<style>
+  :root{
+    --bg:#0b0f17; --card:#141a26; --card2:#1a2233; --border:#232c3d;
+    --text:#e8edf5; --muted:#8b96ab; --accent:#FFD400; --green:#2ecc71;
+    --red:#e74c3c; --blue:#4d9fff;
+  }
+  *{box-sizing:border-box; margin:0; padding:0;}
+  body{
+    background:radial-gradient(1200px 600px at 80% -10%, #1c2a44 0%, var(--bg) 55%);
+    color:var(--text); font-family:"Segoe UI", system-ui, -apple-system, sans-serif;
+    min-height:100vh; padding:24px;
+  }
+  .wrap{max-width:1200px; margin:0 auto;}
+  header{display:flex; align-items:center; gap:14px; margin-bottom:22px; flex-wrap:wrap;}
+  .logo{
+    width:46px; height:46px; border-radius:12px; background:linear-gradient(135deg,#FFD400,#ff9d00);
+    display:flex; align-items:center; justify-content:center; font-size:24px;
+    box-shadow:0 4px 18px rgba(255,212,0,.25);
+  }
+  h1{font-size:22px; letter-spacing:.3px;}
+  .sub{color:var(--muted); font-size:13px; margin-top:2px;}
+  .spacer{flex:1;}
+  .pill{
+    display:inline-flex; align-items:center; gap:8px; padding:7px 14px; border-radius:999px;
+    font-size:13px; font-weight:600; border:1px solid var(--border); background:var(--card);
+  }
+  .dot{width:9px; height:9px; border-radius:50%; background:var(--muted);}
+  .dot.on{background:var(--green); box-shadow:0 0 10px var(--green); animation:pulse 1.4s infinite;}
+  .dot.busy{background:var(--accent); box-shadow:0 0 10px var(--accent); animation:pulse .8s infinite;}
+  @keyframes pulse{50%{opacity:.35;}}
+  .grid{display:grid; grid-template-columns: 380px 1fr; gap:18px;}
+  @media(max-width:900px){.grid{grid-template-columns:1fr;}}
+  .card{background:var(--card); border:1px solid var(--border); border-radius:16px; padding:20px;}
+  .card h2{font-size:14px; text-transform:uppercase; letter-spacing:1.2px; color:var(--muted); margin-bottom:16px; display:flex; align-items:center; gap:8px;}
+  label{display:block; font-size:12px; color:var(--muted); margin:14px 0 6px; font-weight:600;}
+  input, select, textarea{
+    width:100%; background:var(--card2); border:1px solid var(--border); color:var(--text);
+    border-radius:10px; padding:11px 12px; font-size:14px; outline:none; transition:border .2s;
+  }
+  input:focus, select:focus{border-color:var(--accent);}
+  .btn{
+    display:inline-flex; align-items:center; justify-content:center; gap:8px;
+    border:none; border-radius:10px; padding:12px 18px; font-size:14px; font-weight:700;
+    cursor:pointer; transition:transform .12s, box-shadow .2s, opacity .2s; width:100%;
+  }
+  .btn:hover{transform:translateY(-1px);}
+  .btn:disabled{opacity:.5; cursor:not-allowed; transform:none;}
+  .accent{background:linear-gradient(135deg,#FFD400,#ffb100); color:#1a1400; box-shadow:0 4px 16px rgba(255,212,0,.25);}
+  .green{background:var(--green); color:#04220f; box-shadow:0 4px 16px rgba(46,204,113,.25);}
+  .danger{background:transparent; border:1px solid var(--red); color:var(--red);}
+  .ghost{background:var(--card2); border:1px solid var(--border); color:var(--text);}
+  .row{display:flex; gap:10px; align-items:center; flex-wrap:wrap;}
+  .kv{display:grid; grid-template-columns:auto 1fr; gap:6px 14px; font-size:13px; margin-top:12px;}
+  .kv b{color:var(--muted); font-weight:600;}
+  .video-card{padding:0; overflow:hidden;}
+  .video-head{padding:18px 20px; border-bottom:1px solid var(--border); display:flex; align-items:center; gap:12px;}
+  .video-head .state{font-size:12px; padding:4px 10px; border-radius:999px; font-weight:700;}
+  .state.ready{background:rgba(46,204,113,.15); color:var(--green);}
+  .state.rendering{background:rgba(255,212,0,.12); color:var(--accent);}
+  .state.missing{background:rgba(139,150,171,.12); color:var(--muted);}
+  .video-body{padding:20px; display:grid; grid-template-columns: 220px 1fr; gap:18px;}
+  @media(max-width:700px){.video-body{grid-template-columns:1fr;}}
+  .thumb-wrap{
+    aspect-ratio:16/9; border-radius:12px; overflow:hidden; background:#000;
+    border:1px solid var(--border); display:flex; align-items:center; justify-content:center;
+    color:var(--muted); font-size:13px; position:relative;
+  }
+  .thumb-wrap img{width:100%; height:100%; object-fit:cover;}
+  .thumb-tag{
+    position:absolute; top:8px; left:8px; background:rgba(0,0,0,.7); color:var(--accent);
+    font-size:11px; font-weight:700; padding:3px 8px; border-radius:6px;
+  }
+  .video-title{font-size:15px; font-weight:700; line-height:1.4; margin-bottom:6px;}
+  .meta{font-size:12.5px; color:var(--muted); line-height:1.8;}
+  video{width:100%; border-radius:10px; margin-top:12px; background:#000; border:1px solid var(--border);}
+  .log{
+    margin-top:18px; background:#070a10; border:1px solid var(--border); border-radius:12px;
+    padding:14px 16px; font-family:Consolas, "Cascadia Code", monospace; font-size:12px;
+    color:#9fb0c8; height:220px; overflow-y:auto; white-space:pre-wrap; line-height:1.65;
+  }
+  .log .ok{color:var(--green);} .log .warn{color:var(--accent);}
+  .toast{
+    position:fixed; bottom:24px; left:50%; transform:translateX(-50%) translateY(20px);
+    background:var(--card2); border:1px solid var(--border); border-radius:12px;
+    padding:12px 20px; font-size:14px; opacity:0; transition:all .25s; pointer-events:none;
+    max-width:90vw; box-shadow:0 8px 30px rgba(0,0,0,.5); z-index:50;
+  }
+  .toast.show{opacity:1; transform:translateX(-50%) translateY(0);}
+  .toast.err{border-color:var(--red);}
+  .quota-bar{height:6px; background:var(--card2); border-radius:99px; margin-top:8px; overflow:hidden;}
+  .quota-bar span{display:block; height:100%; background:linear-gradient(90deg,var(--accent),var(--blue)); border-radius:99px; transition:width .4s;}
+  .hint{font-size:11.5px; color:var(--muted); line-height:1.6; margin-top:14px;}
+  a{color:var(--blue);}
+  .footer{margin-top:22px; text-align:center; color:var(--muted); font-size:12px; opacity:.7;}
+  .chips{display:flex; flex-wrap:wrap; gap:8px; margin:8px 0 14px;}
+  .chip{background:var(--card2); border:1px solid var(--border); color:var(--text); padding:7px 12px; border-radius:99px; cursor:pointer; font-size:12.5px; transition:.2s;}
+  .chip:hover{border-color:var(--accent); color:var(--accent);}
+  .idea{padding:9px 0; border-bottom:1px solid var(--border); font-size:13px; line-height:1.45;}
+  .idea:last-child{border-bottom:none;}
+  .idea b{color:var(--accent);}
+  .stat-grid{display:flex; gap:12px; flex-wrap:wrap; margin-top:8px;}
+  .stat{flex:1; min-width:90px; background:var(--card2); border:1px solid var(--border); border-radius:12px; padding:10px 12px; text-align:center;}
+  .stat b{display:block; font-size:20px; color:var(--accent);}
+  .stat span{font-size:11px; color:var(--muted);}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div class="logo">🎬</div>
+    <div>
+      <h1>Video Agent</h1>
+      <div class="sub">Auto YouTube Machine — script → voice → HD video → upload</div>
+    </div>
+    <div class="spacer"></div>
+    <span class="pill"><span class="dot" id="jobDot"></span><span id="jobText">checking…</span></span>
+    <span class="pill">📤 Quota: <b id="quotaTxt">–</b>/{{ qmax }} today</span>
+  </header>
+
+  <div class="grid">
+    <!-- LEFT: generate -->
+    <div>
+      <div class="card">
+        <h2>🎞️ New Video</h2>
+        <label>Topic</label>
+        <input id="topic" placeholder="e.g. history of ancient civilizations" value="{{ cfg.niche }}">
+        <label>Quick niche presets (brain command)</label>
+        <div class="chips">
+          <button class="chip" data-niche="dark history, true crime history, dark and mysterious historical events" data-topic="">🌑 Dark History</button>
+          <button class="chip" data-niche="ancient mysteries, unsolved historical mysteries" data-topic="">🔮 Ancient Mysteries</button>
+          <button class="chip" data-niche="historical true crime, famous criminals and murders in history" data-topic="">🕵️ True Crime</button>
+          <button class="chip" data-niche="history of wars and battles, military history" data-topic="">⚔️ Wars</button>
+          <button class="chip" data-niche="" data-topic="">🎲 Random</button>
+        </div>
+        <label>Privacy (upload time)</label>
+        <select id="privacy">
+          <option value="unlisted" selected>Unlisted (recommended)</option>
+          <option value="public">Public</option>
+          <option value="private">Private</option>
+        </select>
+        <div class="hint" id="queueBox" style="display:none;">📋 Queue: <span id="queueTxt">–</span> (idle hone par auto-start)</div>
+        <div style="margin-top:18px;">
+          <button class="btn accent" id="genBtn">▶ Generate Video (no upload)</button>
+        </div>
+        <div style="margin-top:10px;">
+          <button class="btn danger" id="cancelBtn" disabled>■ Cancel running job</button>
+        </div>
+        <div class="hint">
+          Bhai, video banne ke baad <b>confirm</b> karo — preview dekh kar. Phir upload karo.
+          Aaj ke uploads: <span id="usedTxt">0</span>
+          <div class="quota-bar"><span id="quotaFill" style="width:0%"></span></div>
+        </div>
+      </div>
+
+      <div class="card" style="margin-top:18px;">
+        <h2>⚙️ Settings</h2>
+        <div class="kv">
+          <b>Niche</b><span>{{ cfg.niche }}</span>
+          <b>Language</b><span>{{ cfg.language }}</span>
+          <b>Voice</b><span>{{ cfg.voice }}</span>
+          <b>Resolution</b><span>{{ cfg.resolution[0] }}×{{ cfg.resolution[1] }} (HD)</span>
+          <b>Duration target</b><span>{{ cfg.target_duration_minutes }} min</span>
+          <b>Music</b><span>{{ cfg.background_music }} @ {{ cfg.music_volume }}</span>
+        </div>
+        <div class="hint">Config: <code>config.json</code> — GitHub pe sirf <code>config.example.json</code> jaata hai (keys private).</div>
+      </div>
+    </div>
+
+    <!-- RIGHT: latest video + preview -->
+    <div class="card video-card">
+      <div class="video-head">
+        <h2 style="margin:0;">📺 Latest Video</h2>
+        <span class="state" id="vidState">loading…</span>
+        <div class="spacer"></div>
+        <a href="/video" target="_blank" id="rawLink" style="font-size:12px; display:none;">open file ↗</a>
+      </div>
+      <div class="video-body">
+        <div>
+          <div class="thumb-wrap" id="thumbWrap">
+            <span id="thumbPh">koi video nahi</span>
+            <img id="thumbImg" style="display:none;" alt="thumbnail">
+            <span class="thumb-tag" id="hdTag">HD</span>
+          </div>
+          <video id="player" controls preload="none" style="display:none;"></video>
+        </div>
+        <div>
+          <div class="video-title" id="vTitle">—</div>
+          <div class="meta" id="vMeta">—</div>
+          <div style="margin-top:16px;">
+            <button class="green" id="upBtn">⬆ Confirm &amp; Upload to YouTube</button>
+          </div>
+          <div style="margin-top:10px;">
+            <button class="ghost" id="makeBtn">🔁 Re-make video (same topic)</button>
+          </div>
+          <div class="hint" id="upHint">
+            Upload se <b>pehle</b> video confirm karo. Free API: sirf <b>~6 uploads/day</b>.
+            Pehli baar Google login browser mein khulega. Thumbnail ke liye naya token chahiye
+            (youtube.force-ssl scope) — <code>uploader.py</code> khud login kholta hai.
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="grid" style="margin-top:18px; grid-template-columns:1fr 1fr;">
+    <div class="card">
+      <div class="video-head">
+        <h2 style="margin:0;">🧠 AI Next Ideas</h2>
+        <div class="spacer"></div>
+        <button class="ghost" id="ideaBtn" style="padding:6px 12px; font-size:12px;">Generate</button>
+      </div>
+      <div id="ideaList" class="hint" style="margin-top:8px;">Button dabao — Gemini agli 6 video ideas dega (config niche se).</div>
+    </div>
+    <div class="card">
+      <h2>📊 Analytics (last upload)</h2>
+      <div id="anaBox" class="hint">Upload ke baad stats yahan aayenge. (scope: youtube.readonly)
+        <div style="margin-top:10px;"><button class="ghost" id="anaBtn" style="padding:6px 12px; font-size:12px;">Refresh stats</button></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card" style="margin-top:18px;">
+    <h2>🖥️ Live Log</h2>
+    <div class="log" id="log">loading…</div>
+  </div>
+
+  <div class="footer">Video Agent — local control panel · http://127.0.0.1:5001</div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+const $=id=>document.getElementById(id);
+let jobBusy=false;
+
+function toast(msg, err){
+  const t=$("toast"); t.textContent=msg; t.className="toast show"+(err?" err":"");
+  clearTimeout(t._h); t._h=setTimeout(()=>t.className="toast", 3500);
+}
+function setJob(busy, alive){
+  jobBusy=busy;
+  const dot=$("jobDot"), txt=$("jobText");
+  $("genBtn").disabled=busy; $("cancelBtn").disabled=!busy;
+  if(busy){dot.className="dot busy"; txt.textContent=alive?"job running…":"job state stuck? (pid dead)";}
+  else{dot.className="dot"; txt.textContent="idle";}
+  $("upBtn").disabled=busy;
+}
+function esc(s){const d=document.createElement("div"); d.textContent=String(s??""); return d.innerHTML;}
+
+function paint(video, quota_left, qmax, alive){
+  $("quotaTxt").textContent=quota_left+"/"+qmax;
+  $("usedTxt").textContent=(qmax-quota_left)+"/"+qmax;
+  $("quotaFill").style.width=(100*quota_left/qmax)+"%";
+  const st=$("vidState");
+  if(video&&video.exists){
+    st.textContent="✅ ready"; st.className="state ready";
+    $("vTitle").textContent=video.title||"(no title)";
+    const d=video.duration_seconds?`${Math.floor(video.duration_seconds/60)}m ${video.duration_seconds%60}s`:"?";
+    $("vMeta").innerHTML=`<b>${esc(video.filename)}</b><br>${d} · ${esc(video.topic||"")}<br>created: ${esc(video.created||"–")}`;
+    if(video.thumb_exists){$("thumbImg").src="/thumb?"+Date.now(); $("thumbImg").style.display="block"; $("thumbPh").style.display="none";}
+    else{$("thumbImg").style.display="none"; $("thumbPh").style.display="block"; $("thumbPh").textContent="thumbnail pending";}
+    $("player").src="/video?"+Date.now(); $("player").style.display="block";
+    $("rawLink").style.display="inline";
+  }else{
+    st.textContent="⏳ rendering / missing"; st.className="state rendering";
+    $("vTitle").textContent="—"; $("vMeta").textContent="—";
+    $("thumbImg").style.display="none"; $("thumbPh").style.display="block"; $("thumbPh").textContent="abhi koi video ready nahi (render chal raha hai?)";
+    $("player").style.display="none"; $("rawLink").style.display="none";
+  }
+}
+
+async function refresh(){
+  try{
+    const r=await fetch("/api/status"); const s=await r.json();
+    setJob(!!s.job.running, s.alive);
+    paint(s.video, s.quota_left, 6, s.alive);
+    paintQueue(s.queue||[]);
+    const log=$("log");
+    const txt=(s.render_log||"(render log khali)")+"\n\n--- run.log ---\n"+(s.log||"");
+    log.innerHTML=esc(txt).replace(/reuse|cached|done|ok|READY|SUCCESS/gi,"<span class='ok'>$&</span>")
+                           .replace(/\[!\]|fail|error/i,"<span class='warn'>$&</span>");
+    log.scrollTop=log.scrollHeight;
+  }catch(e){ /* server band? */ }
+}
+
+async function post(url, body){
+  try{
+    const r=await fetch(url,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body||{})});
+    const j=await r.json();
+    if(j.ok){toast("✅ done."); refresh();} else toast("❌ "+(j.error||"error"), true);
+  }catch(e){toast("❌ server unreachable", true);}
+}
+
+$("genBtn").onclick=()=>{
+  const topic=$("topic").value.trim(), privacy=$("privacy").value;
+  if(!topic){toast("topic khaali hai", true); return;}
+  toast("video ban rahi hai — upload nahi hoga, pehle confirm karo…");
+  post("/api/generate",{topic,privacy});
+};
+$("makeBtn").onclick=()=>{
+  const topic=$("topic").value.trim()||"{{ cfg.niche }}";
+  post("/api/generate",{topic,privacy:$("privacy").value});
+};
+$("upBtn").onclick=()=>{
+  if(!confirm("Confirm: YouTube par upload kar den? (quota 1 ghat jayegi)")) return;
+  post("/api/upload");
+};
+$("cancelBtn").onclick=()=>post("/api/cancel");
+
+// Quick niche presets (brain command)
+document.querySelectorAll(".chip").forEach(ch=>{
+  ch.onclick=()=>{
+    const nic=ch.dataset.niche, top=ch.dataset.topic||"";
+    if(nic&&!top){ /* preset niche, Gemini topic khud chunega */ }
+    toast("preset send ho gaya: "+(nic||"random/history"));
+    post("/api/quickgen", {niche:nic, topic:top});
+  };
+});
+
+// Queue display in refresh
+function paintQueue(queue){
+  const qb=$("queueBox");
+  if(queue&&queue.length){
+    qb.style.display="block";
+    $("queueTxt").textContent=queue.map(j=>j.niche||j.topic||"(topic auto)").join(" → ");
+  }else qb.style.display="none";
+}
+
+$("ideaBtn").onclick=async()=>{
+  $("ideaList").innerHTML="generating…";
+  try{
+    const r=await fetch("/api/ideas"); const j=await r.json();
+    const ideas=(j.ideas||[]).filter(i=>!i.error);
+    if(!ideas.length){$("ideaList").innerHTML="❌ "+((j.ideas||[])[0]?.error||"koi idea nahi"); return;}
+    $("ideaList").innerHTML=ideas.map((it,i)=>`<div class="idea"><b>${i+1}. ${esc(it.title)}</b><br>${esc(it.angle||"")}</div>`).join("");
+  }catch(e){$("ideaList").innerHTML="❌ server fail";}
+};
+$("anaBtn").onclick=async()=>{
+  $("anaBox").innerHTML="fetching…";
+  try{
+    const r=await fetch("/api/analytics"); const j=await r.json();
+    if(!j.ok){$("anaBox").innerHTML="❌ "+esc(j.error); return;}
+    $("anaBox").innerHTML=`<div class="stat-grid">
+      <div class="stat"><b>${Number(j.views).toLocaleString()}</b><span>views</span></div>
+      <div class="stat"><b>${Number(j.likes).toLocaleString()}</b><span>likes</span></div>
+      <div class="stat"><b>${Number(j.comments).toLocaleString()}</b><span>comments</span></div>
+    </div>
+    <div style="margin-top:8px; font-size:12px; color:var(--muted);">${esc(j.title||"")}</div>`;
+  }catch(e){$("anaBox").innerHTML="❌ server fail";}
+};
+
+refresh();
+setInterval(refresh, 3000);
+</script>
+</body>
+</html>

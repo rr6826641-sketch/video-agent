@@ -1,0 +1,38 @@
+{
+  "gemini_api_key": "YOUR_GEMINI_API_KEY",
+  "pexels_api_key": "YOUR_PEXELS_API_KEY",
+  "gemini_model": "gemini-3.6-flash",
+  "niche": "fascinating history facts from around the world",
+  "language": "English",
+  "voice": "en-US-GuyNeural",
+  "urdu_voice": "ur-PK-UzmaNeural",
+  "sentences_per_video": 120,
+  "target_duration_minutes": 10,
+  "shorts_mode": false,
+  "resolution": [
+    1920,
+    1080
+  ],
+  "background_music": "music.mp3",
+  "music_volume": 0.12,
+  "pause_between_sentences": 0.25,
+  "caption_style": "static",
+  "caption_words_per_group": 3,
+  "progress_bar": true,
+  "ken_burns": true,
+  "fade": true,
+  "youtube": {
+    "privacy": "unlisted",
+    "category_id": "27",
+    "tags_extra": [
+      "history",
+      "ancient history",
+      "documentary",
+      "world history"
+    ],
+    "title_prefix": "",
+    "made_for_kids": false,
+    "upload_thumbnail": true
+  },
+  "upload_automatically": false
+}

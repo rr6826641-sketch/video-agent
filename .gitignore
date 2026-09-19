@@ -1,0 +1,25 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+
+# Secrets — kabhi GitHub par mat dalna
+client_secrets.json
+token.json
+token_*.json
+config.json
+
+# Generated media (bahut bari files)
+audio/
+clips/
+output/
+*.mp3
+*.mp4
+*.jpg
+*.png
+
+# Logs / runtime data
+logs/
+data/
