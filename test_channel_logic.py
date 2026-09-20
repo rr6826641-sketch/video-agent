@@ -35,4 +35,15 @@ print("T6 dark_history creds:", yt.get("client_secrets"), "| token:", yt.get("to
 import main as m
 c, ch = m.resolve_channel("bushcraft")
 print("T7 main resolve bushcraft:", c, "| niche:", ch["niche"][:40], "...")
+# TEST 6: video_maker channel-aware thumbnail signature
+import inspect, video_maker
+sig = inspect.signature(video_maker.make_video)
+assert "channel" in sig.parameters, "make_video mein channel param nahi!"
+print("T8 video_maker channel param: OK")
+
+# TEST 7: main.py make_video call channel pass karta hai
+src = open("main.py", encoding="utf-8").read()
+assert "channel=channel" in src, "main.py make_video call channel nahi pass karta!"
+print("T9 main.py channel->make_video: OK")
+
 print("ALL TESTS DONE OK")

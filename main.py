@@ -96,7 +96,7 @@ def build_one(upload_enabled=True, topic=None, out_path=None, cleanup=True, nich
     video_path = None
     for attempt in range(2):
         try:
-            video_path = video_maker.make_video(script_data, audio_files, voiceover_path, out_path=out_path)
+            video_path = video_maker.make_video(script_data, audio_files, voiceover_path, out_path=out_path, channel=channel)
             break
         except MemoryError:
             log(f"    [!] Render memory error (attempt {attempt + 1}/2) — dobara try...")

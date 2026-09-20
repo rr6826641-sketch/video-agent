@@ -294,7 +294,7 @@ def make_thumbnail(video_path, title, out_path="output/thumbnail.jpg"):
     return out_path
 
 
-def make_video(script_data, audio_files, voiceover_path, out_path="output/final.mp4", clips_dir=None):
+def make_video(script_data, audio_files, voiceover_path, out_path="output/final.mp4", clips_dir=None, channel=None):
     """Memory-safe pipeline: HAR SEGMENT alag se render hota hai (1 clip at a time),
     phir ffmpeg -c copy se concat, phir audio mux. 120 segments par bhi no crash.
     Upgrade: clips_dir doge to usi dir ke pehle se maujood clips/segs reuse honge (crash-resume)."""
@@ -444,7 +444,8 @@ def make_video(script_data, audio_files, voiceover_path, out_path="output/final.
     except Exception:
         pass
     try:
-        thumb = make_thumbnail(out_path, script_data.get("title", ""))
+        thumb_name = f"thumbnail_{channel}.jpg" if channel else "thumbnail.jpg"
+        thumb = make_thumbnail(out_path, script_data.get("title", ""), out_path=f"output/{thumb_name}")
         print(f"    Thumbnail: {thumb}")
     except Exception as e:
         print(f"    [!] thumbnail skip: {e}")
