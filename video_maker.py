@@ -52,6 +52,20 @@ INTRO_DUR = float(CINE.get("intro_duration", 2.5))
 OUTRO_CARD = bool(CINE.get("outro_card", True))
 OUTRO_DUR = float(CINE.get("outro_duration", 3.0))
 CARDS_SEP = " — "
+
+# ---- Render speed (config.json: "render": {...}) ----
+# Asli bottleneck: 4K Pexels clips ko moviepy per-frame 1080p mein resize karta tha.
+# Ab (1) download par target-resolution ke qareeb clip chunte hain,
+#    (2) clip ko ek baar ffmpeg se normalize karte hain (4K->1080p),
+#    (3) encoder preset/crf/threads config se control hote hain.
+_R = CFG.get("render", {})
+RENDER_PRESET = str(_R.get("preset", "superfast"))
+RENDER_CRF = str(_R.get("crf", 21))
+RENDER_THREADS = int(_R.get("threads", 0)) or (os.cpu_count() or 2)
+NORMALIZE_CLIPS = bool(_R.get("normalize_clips", True))
+CLIP_TARGET_H = int(_R.get("clip_target_height", H))
+RENDER_FPS = int(CFG.get("fps", 30))
+ENC_ARGS = ["-crf", RENDER_CRF, "-pix_fmt", "yuv420p"]
 _CH = json.load(open("channels.json", encoding="utf-8")) if os.path.exists("channels.json") else {}
 
 
@@ -220,14 +234,20 @@ def _kenburns(clip, duration, seed=0):
         def pos(t, _d=duration, _ex=ex):
             return ("center", _ex - _ex * (t / _d))
     elif mode == 2:    # pan left -> right
-        c2 = clip.resized(width=int(W * (zoom + 0.04))).cropped(x_center=W * (zoom + 0.04) / 2, height=H)
-        ex2 = (c2.w - W) / 2.0
+        # NOTE: moviepy 2.x Crop me x_center ke saath width/height dena ZAROORI hai,
+        # warna 'NoneType / int' crash. Isliye width=W, height=H explicit.
+        w2 = int(W * (zoom + 0.04))
+        c2 = clip.resized(width=w2)
+        c2 = c2.cropped(x_center=w2 / 2.0, y_center=c2.h / 2.0, width=W, height=H)
+        ex2 = (w2 - W) / 2.0
         def pos2(t, _d=duration, _ex=ex2):
             return (-_ex + 2 * _ex * (t / _d), "center")
         return c2.with_position(pos2)
     else:              # pan right -> left
-        c2 = clip.resized(width=int(W * (zoom + 0.04))).cropped(x_center=W * (zoom + 0.04) / 2, height=H)
-        ex2 = (c2.w - W) / 2.0
+        w2 = int(W * (zoom + 0.04))
+        c2 = clip.resized(width=w2)
+        c2 = c2.cropped(x_center=w2 / 2.0, y_center=c2.h / 2.0, width=W, height=H)
+        ex2 = (w2 - W) / 2.0
         def pos3(t, _d=duration, _ex=ex2):
             return (_ex - 2 * _ex * (t / _d), "center")
         return c2.with_position(pos3)
@@ -252,13 +272,52 @@ def make_gradient_clip(index, duration):
     return _kenburns(clip, duration, index).with_duration(duration)
 
 
+def _normalize_clip(src, index):
+    """Clip ko ek baar ffmpeg se exact W x H (target resolution) mein scale karo.
+    Isse moviepy 4K source ko per-frame resize nahi karta — render bahut tez.
+    Fail ho to original path wapas."""
+    if not NORMALIZE_CLIPS:
+        return src
+    norm = os.path.join(CLIPS_DIR, f"clip_{index:03d}_n.mp4")
+    if os.path.exists(norm) and os.path.getsize(norm) > 50_000:
+        return norm
+    try:
+        _ffmpeg(["-y", "-i", src,
+                 "-vf", f"scale={W}:{H}:force_original_aspect_ratio=increase,"
+                        f"crop={W}:{H},fps={RENDER_FPS}",
+                 "-an", "-c:v", "libx264", "-preset", "veryfast", "-crf", "20",
+                 "-pix_fmt", "yuv420p", norm])
+        if os.path.exists(norm) and os.path.getsize(norm) > 50_000:
+            print(f"    clip {index + 1}: normalized -> {W}x{H}", flush=True)
+            return norm
+    except Exception as e:
+        print(f"    [!] clip {index + 1}: normalize skip ({e})", flush=True)
+    return src
+
+
+def _pick_best_file(video_files, target_h):
+    """Target resolution ke SABSE QAREEB file chuno (4K download mat karo).
+    Pehle target se bade/barabar sabse chhoti file; warna sabse badi available."""
+    if not video_files:
+        return None
+    ge = [f for f in video_files if f.get("height", 0) >= target_h]
+    if ge:
+        return min(ge, key=lambda f: f.get("height", 0))
+    return max(video_files, key=lambda f: f.get("height", 0))
+
+
 def fetch_pexels_clip(keyword, index, attempts=2):
-    """Pexels API se free HD stock video download. No key/fail -> gradient fallback."""
+    """Pexels API se stock video download + target-res normalize. Fail -> gradient fallback.
+    Speed: 4K nahi — target height (CLIP_TARGET_H) ke qareeb clip chunte hain."""
     path = os.path.join(CLIPS_DIR, f"clip_{index:03d}.mp4")
-    # Crash-resume: pehle se downloaded clip -> reuse (network + time bachta hai)
+    norm = os.path.join(CLIPS_DIR, f"clip_{index:03d}_n.mp4")
+    # Crash-resume: normalized ya raw clip pehle se hai -> reuse
+    if os.path.exists(norm) and os.path.getsize(norm) > 50_000:
+        print(f"    clip {index + 1}: reuse (normalized)", flush=True)
+        return norm
     if os.path.exists(path) and os.path.getsize(path) > 50_000:
         print(f"    clip {index + 1}: reuse (cached)", flush=True)
-        return path
+        return _normalize_clip(path, index)
     key = CFG.get("pexels_api_key", "")
     if key and "YAHAN" not in key:
         for attempt in range(1, attempts + 1):
@@ -270,23 +329,23 @@ def fetch_pexels_clip(keyword, index, attempts=2):
                     timeout=30)
                 r.raise_for_status()
                 vids = r.json().get("videos", [])
+                target_h = CLIP_TARGET_H if LANDSCAPE else max(CLIP_TARGET_H, 1920)
                 for v in vids:
+                    files = v.get("video_files", [])
                     if LANDSCAPE:
-                        files = [f for f in v.get("video_files", [])
-                                 if f.get("width", 0) >= 1280 and f.get("height", 0) >= 720]
+                        files = [f for f in files if f.get("height", 0) >= 720]
                     else:
-                        files = [f for f in v.get("video_files", [])
-                                 if 1280 <= f.get("height", 0) <= 2160]
+                        files = [f for f in files if 1280 <= f.get("height", 0) <= 2160]
                     if not files:
                         files = v.get("video_files", [])
-                    if files:
-                        best = sorted(files, key=lambda f: f.get("height", 0))[-1]
+                    best = _pick_best_file(files, target_h)
+                    if best:
                         d = requests.get(best["link"], timeout=120)
                         with open(path, "wb") as fh:
                             fh.write(d.content)
                         if os.path.getsize(path) > 50_000:
                             print(f"    clip {index + 1}: pexels ok ({best.get('height')}p)")
-                            return path
+                            return _normalize_clip(path, index)
                         print(f"    [!] clip {index + 1}: too small, retry")
             except Exception as e:
                 print(f"    [!] pexels fail ({keyword}) attempt {attempt}: {e}")
@@ -412,9 +471,9 @@ def make_card_seg(idx, kind, title, sub="", dur=2.5):
     png = make_card_png(kind, title, sub)
     seg_path = os.path.join(CLIPS_DIR, f"card_seg_{idx:02d}.mp4")
     clip = ImageClip(png).with_duration(dur)
-    clip.write_videofile(seg_path, fps=30, codec="libx264", preset="veryfast",
-                         threads=min(4, os.cpu_count() or 2), audio=False,
-                         logger=None, ffmpeg_params=["-crf", "19", "-pix_fmt", "yuv420p"])
+    clip.write_videofile(seg_path, fps=RENDER_FPS, codec="libx264", preset=RENDER_PRESET,
+                         threads=RENDER_THREADS, audio=False,
+                         logger=None, ffmpeg_params=ENC_ARGS)
     clip.close()
     try:
         os.remove(png)
@@ -540,9 +599,9 @@ def make_video(script_data, audio_files, voiceover_path, out_path="output/final.
                     pass
             continue
         comp = CompositeVideoClip(layers, size=(W, H))
-        comp.write_videofile(seg_path, fps=30, codec="libx264", preset="veryfast",
-                             threads=min(4, os.cpu_count() or 2), audio=False,
-                             logger=None, ffmpeg_params=["-crf", "19", "-pix_fmt", "yuv420p"])
+        comp.write_videofile(seg_path, fps=RENDER_FPS, codec="libx264", preset=RENDER_PRESET,
+                             threads=RENDER_THREADS, audio=False,
+                             logger=None, ffmpeg_params=ENC_ARGS)
         comp.close()
         try:
             bg.close()

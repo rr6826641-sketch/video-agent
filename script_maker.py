@@ -256,27 +256,75 @@ def save_used_topic(topic):
     json.dump(used[-200:], open(USED_TOPICS_FILE, "w", encoding="utf-8"), indent=2)
 
 
-def gemini_call(prompt, attempts=5):
-    """Gemini generateContent — 5 attempts, exponential backoff. Fail hone par None."""
-    key = CFG["gemini_api_key"]
-    if "YAHAN" in key or not key.strip():
+# ---- Multi-key rotation -----------------------------------------------------
+# config.json: "gemini_api_keys" (array) me jitni keys do, sab rotate hoti hain.
+# Empty ho to single "gemini_api_key" use hoti hai. 429/401/403 par key ko
+# COOLDOWN_SECONDS ke liye skip kar diya jata hai aur agla key try hota hai —
+# is tarah ek key exhaust hone par poora script generation nahi rukta.
+COOLDOWN_SECONDS = float(CFG.get("gemini_key_cooldown_seconds", 600))
+_KEY_COOLDOWN = {}   # key -> unix ts jab tak skip karni hai
+_KEY_RR = {"i": 0}   # round-robin index
+
+
+def _load_keys():
+    keys = CFG.get("gemini_api_keys") or []
+    if isinstance(keys, str):
+        keys = [keys]
+    keys = [k.strip() for k in keys if k and k.strip()]
+    single = (CFG.get("gemini_api_key") or "").strip()
+    if single and "YAHAN" not in single and single not in keys:
+        keys = [single] + keys
+    return [k for k in keys if "YAHAN" not in k]
+
+
+def _key_failed_hard(err):
+    """Ye status codes = key khatam/blocked (turant rotate karo)."""
+    s = str(err)
+    return any(code in s for code in ("429", "401", "403", "Too Many Requests", "quota", "Quota"))
+
+
+def gemini_call(prompt, attempts=5, keys=None):
+    """Gemini generateContent — multi-key rotation + per-key exponential backoff.
+    Key range: keys param -> config gemini_api_keys/single. Sab keys fail = None."""
+    keys = keys or _load_keys()
+    if not keys:
         return None
     body = {
         "contents": [{"parts": [{"text": prompt}]}],
         "generationConfig": {"response_mime_type": "application/json", "temperature": 0.9}
     }
+    now = time.time()
     last_err = None
+    total = len(keys)
     for attempt in range(1, attempts + 1):
+        # har attempt par round-robin se agla available key chuno
+        tried = 0
+        key = None
+        while tried < total:
+            cand = keys[_KEY_RR["i"] % total]
+            _KEY_RR["i"] = (_KEY_RR["i"] + 1) % (total * 1000)
+            tried += 1
+            if _KEY_COOLDOWN.get(cand, 0) <= now:
+                key = cand
+                break
+        if key is None:
+            print(f"    [!] Saari {total} Gemini keys cooldown mein — koi available nahi.", flush=True)
+            break
+        masked = key[:6] + "..." + key[-4:] if len(key) > 12 else "***"
         try:
             r = requests.post(GEMINI_URL, params={"key": key}, json=body, timeout=120)
             r.raise_for_status()
             return r.json()["candidates"][0]["content"]["parts"][0]["text"]
         except Exception as e:
             last_err = e
-            print(f"    [!] Gemini call {attempt}/{attempts} fail ({GEMINI_MODEL}): {e}", flush=True)
-            if attempt < attempts:
-                time.sleep(min(30, 2 ** attempt))  # 2s, 4s, 8s, 16s backoff
-    print(f"    [!] Gemini {attempts} attempts ke baad bhi fail — last error: {last_err}", flush=True)
+            if _key_failed_hard(e):
+                _KEY_COOLDOWN[key] = time.time() + COOLDOWN_SECONDS
+                print(f"    [!] Gemini key {masked} exhaust/blocked ({e}) — {int(COOLDOWN_SECONDS)}s cooldown, agla key", flush=True)
+                continue  # turant agla key, is attempt mein backoff nahi
+            print(f"    [!] Gemini call {attempt}/{attempts} fail, key {masked} ({GEMINI_MODEL}): {e}", flush=True)
+        if attempt < attempts:
+            time.sleep(min(30, 2 ** attempt))  # 2s, 4s, 8s, 16s backoff
+    print(f"    [!] Gemini saari keys/attempts ke baad fail — last error: {last_err}", flush=True)
     return None
 
 
