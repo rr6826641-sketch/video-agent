@@ -19,30 +19,6 @@ SCOPES = ["https://www.googleapis.com/auth/youtube.upload",
           "https://www.googleapis.com/auth/youtube.force-ssl"]
 
 
-def import_root(channel, force=False):
-    """Root ke mojood client_secrets.json + token.json ko us channel par copy karo.
-    Browser login dobara karne ki zaroorat nahi (jab wahi Google account use karna ho)."""
-    import shutil
-    ch = CHANNELS_CFG.get("channels", {}).get(channel)
-    if not ch:
-        print(f"[!] Channel '{channel}' channels.json mein nahi hai. Available: {list(CHANNELS_CFG.get('channels', {}))}")
-        sys.exit(1)
-    yt = ch.get("youtube", {})
-    dst_secrets = yt.get("client_secrets", "client_secrets.json")
-    dst_token = yt.get("token", "token.json")
-    for src, dst in (("client_secrets.json", dst_secrets), ("token.json", dst_token)):
-        if not os.path.exists(src):
-            print(f"[!] root '{src}' nahi mila -- import skip")
-            continue
-        if os.path.exists(dst) and not force:
-            print(f"[=] {dst} pehle se mojood hai (--force se overwrite)")
-            continue
-        os.makedirs(os.path.dirname(os.path.abspath(dst)), exist_ok=True)
-        shutil.copyfile(src, dst)
-        print(f"[ok] {src} -> {dst}")
-    print(f"[i] '{channel}' ab root credentials use karta hai. Test: python uploader.py --channel {channel}")
-
-
 def main(channel=None):
     client_secrets = "client_secrets.json"
     token_file = "token.json"
@@ -113,7 +89,4 @@ if __name__ == "__main__":
         idx = sys.argv.index("--channel")
         if idx + 1 < len(sys.argv):
             ch = sys.argv[idx + 1]
-    if "--import-root" in sys.argv:
-        import_root(ch or CHANNELS_CFG.get("default_channel"), force="--force" in sys.argv)
-    else:
-        main(channel=ch)
+    main(channel=ch)

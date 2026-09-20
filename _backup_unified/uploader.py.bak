@@ -53,13 +53,6 @@ def get_credentials(client_secrets, token_file, scopes):
         have = set(creds.scopes or [])
         if set(scopes) <= have:
             return creds
-        # agar required upload scope mojood hai to optional (thumbnail) scope ke
-        # liye poori login force mat karo - gracefully degrade karo
-        required = "https://www.googleapis.com/auth/youtube.upload"
-        if required in have:
-            missing = sorted(set(scopes) - have)
-            print(f"    [!] Optional scope missing ({missing}) — thumbnail skip hoga, upload chalta rahega")
-            return creds
         print("    [!] Token scopes purane hain — naya login chahiye")
         creds = None
     if not os.path.exists(client_secrets):
@@ -113,9 +106,6 @@ def upload(video_path, script_data, channel=None):
     print(f"    Credentials: {client_secrets} + {token_file}", flush=True)
 
     creds = get_credentials(client_secrets, token_file, scopes)
-    if use_thumb and "https://www.googleapis.com/auth/youtube.force-ssl" not in set(creds.scopes or []):
-        print("    [!] Thumbnail skip: token mein youtube.force-ssl nahi hai (video phir bhi upload hoga)")
-        use_thumb = False
     yt = build("youtube", "v3", credentials=creds)
 
     tags = list(script_data.get("tags", [])) + list(yt_cfg.get("tags_extra", []))

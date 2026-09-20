@@ -1,0 +1,52 @@
+{
+  "default_channel": "dark_history",
+  "channels": {
+    "bushcraft": {
+      "name": "Bushcraft",
+      "niche": "winter bushcraft, wilderness survival, snow shelter building, fire making and cooking in the wild",
+      "voice": "en-US-GuyNeural",
+      "sentences_per_video": 120,
+      "target_duration_minutes": 10,
+      "youtube": {
+        "client_secrets": "channels/bushcraft/client_secrets.json",
+        "token": "channels/bushcraft/token.json",
+        "privacy": "unlisted",
+        "category_id": "27",
+        "title_prefix": "",
+        "tags_extra": [
+          "bushcraft",
+          "wilderness survival",
+          "winter camping",
+          "snow shelter",
+          "survival skills",
+          "outdoor cooking"
+        ],
+        "upload_thumbnail": true,
+        "made_for_kids": false
+      }
+    },
+    "dark_history": {
+      "name": "Dark History",
+      "niche": "dark history, true crime history, dark and mysterious historical events",
+      "voice": "en-US-AriaNeural",
+      "sentences_per_video": 120,
+      "target_duration_minutes": 10,
+      "youtube": {
+        "client_secrets": "channels/dark_history/client_secrets.json",
+        "token": "channels/dark_history/token.json",
+        "privacy": "unlisted",
+        "category_id": "27",
+        "title_prefix": "",
+        "tags_extra": [
+          "dark history",
+          "true crime history",
+          "historical mysteries",
+          "unsolved mysteries",
+          "documentary"
+        ],
+        "upload_thumbnail": true,
+        "made_for_kids": false
+      }
+    }
+  }
+}

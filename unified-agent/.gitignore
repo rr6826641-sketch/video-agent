@@ -1,0 +1,5 @@
+# deps + build output (rebuild with: npm install && npm run build)
+node_modules/
+dist/
+.vite/
+*.local
