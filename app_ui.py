@@ -153,6 +153,8 @@ def api_status():
         if job:
             import subprocess as _sp
             cmd = [sys.executable, "main.py", "--no-upload"]
+            if job.get("channel"):
+                cmd += ["--channel", job["channel"]]
             if job.get("topic"):
                 cmd += ["--topic", job["topic"]]
             if job.get("niche"):
@@ -161,7 +163,7 @@ def api_status():
                       stdout=open(os.path.join(ROOT, "logs", "ui_job.log"), "wb"),
                       stderr=subprocess.STDOUT)
             set_job(running=True, start=now(), cmd=" ".join(cmd), kind="queued",
-                    topic=job.get("topic"), niche=job.get("niche"))
+                    topic=job.get("topic"), niche=job.get("niche"), channel=job.get("channel"))
     return jsonify({
         "job": job_state(),
         "alive": is_job_alive(),
@@ -189,13 +191,16 @@ def api_generate():
         cfg.setdefault("youtube", {})["privacy"] = privacy
         json.dump(cfg, open(CFG_PATH, "w", encoding="utf-8"), indent=2, ensure_ascii=False)
         cmd = [sys.executable, "main.py", "--no-upload", "--topic", topic]
+        _ch = (request.json or {}).get("channel")
+        if _ch:
+            cmd += ["--channel", _ch]
         if (request.json or {}).get("niche"):
             cmd += ["--niche", (request.json or {}).get("niche")]
         proc = subprocess.Popen(cmd, cwd=ROOT,
                                 stdout=open(os.path.join(ROOT, "logs", "ui_job.log"), "wb"),
                                 stderr=subprocess.STDOUT)
         set_job(running=True, pid=proc.pid, start=now(), cmd=" ".join(cmd), kind="generate",
-                topic=topic, niche=(request.json or {}).get("niche"))
+                topic=topic, niche=(request.json or {}).get("niche"), channel=_ch)
         return jsonify({"ok": True, "started": True, "pid": proc.pid})
 
 
@@ -241,14 +246,17 @@ def api_quickgen():
     data = request.json or {}
     niche = (data.get("niche") or "").strip()
     topic = (data.get("topic") or "").strip()
+    channel = (data.get("channel") or "").strip() or None
     with _lock:
         if is_job_alive():
             q = load_queue()
-            q.append({"topic": topic or None, "niche": niche or None,
+            q.append({"topic": topic or None, "niche": niche or None, "channel": channel or None,
                       "queued_at": now(), "status": "queued", "source": "ui"})
             save_queue(q)
             return jsonify({"ok": True, "queued": True, "queue": q})
         cmd = [sys.executable, "main.py", "--no-upload"]
+        if channel:
+            cmd += ["--channel", channel]
         if topic:
             cmd += ["--topic", topic]
         if niche:
@@ -257,7 +265,7 @@ def api_quickgen():
                                 stdout=open(os.path.join(ROOT, "logs", "ui_job.log"), "wb"),
                                 stderr=subprocess.STDOUT)
         set_job(running=True, pid=proc.pid, start=now(), cmd=" ".join(cmd), kind="generate",
-                topic=topic, niche=niche)
+                topic=topic, niche=niche, channel=channel)
         return jsonify({"ok": True, "started": True, "pid": proc.pid})
 
 

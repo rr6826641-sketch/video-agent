@@ -1,9 +1,12 @@
 """uploader.py — YouTube Data API v3 se khud upload (pehli baar login, baad mein auto).
-Upgrade v2:
-  * made_for_kids flag (config: youtube.made_for_kids)
-  * optional custom thumbnail upload (config: youtube.upload_thumbnail = true)
-    NOTE: thumbnail ke liye extra scope "youtube.force-ssl" chahiye — naya login hoga.
-  * video file path last_video_info.json se (hardcoded final.mp4 nahi)
+Upgrade v3 (2-CHANNEL SAFE):
+  * channels.json se per-channel credentials (client_secrets + token + youtube settings)
+  * HARD GUARD: video jis channel ke liye bani hai (last_video_info.json -> "channel"),
+    upload SIRF usi channel ke credentials se hota hai.
+    Cross-upload (bushcraft video -> dark history channel) code-level NAAMUMKIN hai:
+      1) har channel ka apna OAuth client + token file hota hai (alag Google account)
+      2) agar video ka channel != upload channel -> upload turant BLOCK
+  * per-channel thumbnail: output/thumbnail_<channel>.jpg (agar hai), warna default thumbnail.jpg
 """
 import json, os, socket, sys, time
 from google.auth.transport.requests import Request
@@ -14,23 +17,32 @@ from googleapiclient.errors import HttpError
 from googleapiclient.http import MediaFileUpload
 
 CFG = json.load(open("config.json", encoding="utf-8"))
-TOKEN_FILE = "token.json"
-CLIENT_SECRETS = "client_secrets.json"
-THUMBNAIL = "output/thumbnail.jpg"
-
-_YOUTUBE_CFG = CFG.get("youtube", {})
-USE_THUMBNAIL = bool(_YOUTUBE_CFG.get("upload_thumbnail", False))
-SCOPES = ["https://www.googleapis.com/auth/youtube.upload"]
-if USE_THUMBNAIL:
-    SCOPES.append("https://www.googleapis.com/auth/youtube.force-ssl")
+CHANNELS_CFG = json.load(open("channels.json", encoding="utf-8"))
 
 
-def get_credentials():
+def resolve_channel(name):
+    """Channel ka naam -> channel object. Na ho to FORCE fail (koi fallback nahi)."""
+    channels = CHANNELS_CFG.get("channels", {})
+    if not name:
+        name = CHANNELS_CFG.get("default_channel", "default")
+    name = str(name).strip()
+    if name not in channels:
+        raise Exception(f"[!] Channel '{name}' channels.json mein nahi hai. Available: {list(channels)}")
+    return name, channels[name]
+
+
+def channel_youtube_cfg(channel_obj):
+    """config.json ke youtube defaults + channel ke youtube overrides."""
+    yt = dict(CFG.get("youtube", {}))
+    yt.update(channel_obj.get("youtube", {}))
+    return yt
+
+
+def get_credentials(client_secrets, token_file, scopes):
     creds = None
-    if os.path.exists(TOKEN_FILE):
+    if os.path.exists(token_file):
         # NOTE: scopes param NAHI pass karte — warna original scopes overwrite ho jate hain
-        # aur refresh par 'invalid_scope' error aata hai (refresh token sirf purane scope ke liye grant hua)
-        creds = Credentials.from_authorized_user_file(TOKEN_FILE)
+        creds = Credentials.from_authorized_user_file(token_file)
     if creds and creds.expired and creds.refresh_token:
         try:
             creds.refresh(Request())
@@ -39,18 +51,26 @@ def get_credentials():
             creds = None
     if creds and creds.valid:
         have = set(creds.scopes or [])
-        if set(SCOPES) <= have:
+        if set(scopes) <= have:
             return creds
-        # scope kam hai (e.g. sirf upload, force-ssl nahi) -> naya consent chahiye
-        print("    [!] Token scopes purane hain — naya login chahiye (thumbnail scope)")
+        print("    [!] Token scopes purane hain — naya login chahiye")
         creds = None
-    if not os.path.exists(CLIENT_SECRETS):
-        raise Exception("client_secrets.json nahi mila! README ke Step 3 dekho (Google Cloud Console setup).")
-    flow = InstalledAppFlow.from_client_secrets_file(CLIENT_SECRETS, SCOPES)
+    if not os.path.exists(client_secrets):
+        raise Exception(f"{client_secrets} nahi mila! us channel ka OAuth client chahiye (README Step 3).")
+    flow = InstalledAppFlow.from_client_secrets_file(client_secrets, scopes)
     creds = flow.run_local_server(port=0)  # browser khulega, ek baar login karna hai
-    with open(TOKEN_FILE, "w") as f:
+    os.makedirs(os.path.dirname(os.path.abspath(token_file)), exist_ok=True)
+    with open(token_file, "w") as f:
         f.write(creds.to_json())
     return creds
+
+
+def thumbnail_for(channel):
+    """Per-channel thumbnail priority: output/thumbnail_<channel>.jpg -> output/thumbnail.jpg."""
+    cand = os.path.join("output", f"thumbnail_{channel}.jpg")
+    if os.path.exists(cand):
+        return cand
+    return os.path.join("output", "thumbnail.jpg")
 
 
 def load_last_video():
@@ -62,21 +82,46 @@ def load_last_video():
     return {}
 
 
-def upload(video_path, script_data):
-    creds = get_credentials()
+def upload(video_path, script_data, channel=None):
+    # ---------------- channel resolution + HARD GUARD (no cross-upload) ----------------
+    info_channel = script_data.get("channel")           # video kis channel ki hai
+    use_channel = channel or info_channel or "default"
+    if info_channel and info_channel != use_channel:
+        raise Exception(
+            f"[!] CROSS-UPLOAD BLOCKED: video '{info_channel}' channel ke liye bani hai, "
+            f"lekin upload '{use_channel}' ke naam par ja raha tha. Rok diya."
+        )
+    cname, ch = resolve_channel(use_channel)
+    yt_cfg = channel_youtube_cfg(ch)
+
+    client_secrets = yt_cfg.get("client_secrets", "client_secrets.json")
+    token_file = yt_cfg.get("token", "token.json")
+
+    use_thumb = bool(yt_cfg.get("upload_thumbnail", False))
+    scopes = ["https://www.googleapis.com/auth/youtube.upload"]
+    if use_thumb:
+        scopes.append("https://www.googleapis.com/auth/youtube.force-ssl")
+
+    print(f"    Channel: {ch.get('name', cname)} ({cname})", flush=True)
+    print(f"    Credentials: {client_secrets} + {token_file}", flush=True)
+
+    creds = get_credentials(client_secrets, token_file, scopes)
     yt = build("youtube", "v3", credentials=creds)
 
-    tags = script_data.get("tags", []) + _YOUTUBE_CFG.get("tags_extra", [])
+    tags = list(script_data.get("tags", [])) + list(yt_cfg.get("tags_extra", []))
+    title = script_data["title"][:100]
+    if yt_cfg.get("title_prefix"):
+        title = (str(yt_cfg["title_prefix"]) + title)[:100]
     body = {
         "snippet": {
-            "title": script_data["title"][:100],
+            "title": title,
             "description": script_data["description"][:4900],
             "tags": tags[:30],
-            "categoryId": _YOUTUBE_CFG.get("category_id", "28"),
+            "categoryId": yt_cfg.get("category_id", "28"),
         },
         "status": {
-            "privacyStatus": _YOUTUBE_CFG.get("privacy", "unlisted"),
-            "selfDeclaredMadeForKids": bool(_YOUTUBE_CFG.get("made_for_kids", False)),
+            "privacyStatus": yt_cfg.get("privacy", "unlisted"),
+            "selfDeclaredMadeForKids": bool(yt_cfg.get("made_for_kids", False)),
         },
     }
 
@@ -119,23 +164,25 @@ def upload(video_path, script_data):
         dur = load_last_video().get("duration_seconds", 0)
     is_long = vid and dur >= 180
 
-    # custom thumbnail (optional)
-    if USE_THUMBNAIL and vid and os.path.exists(THUMBNAIL):
-        try:
-            yt.thumbnails().set(
-                videoId=vid,
-                media_body=MediaFileUpload(THUMBNAIL, mimetype="image/jpeg"),
-            ).execute()
-            print("    Thumbnail set ✅")
-        except Exception as e:
-            print(f"    [!] Thumbnail set fail: {e}")
-            print("        token.json delete karke dobara run karo (naya scope chahiye: youtube.force-ssl)")
+    # custom thumbnail (per-channel)
+    if use_thumb and vid:
+        thumb_path = thumbnail_for(cname)
+        if os.path.exists(thumb_path):
+            try:
+                yt.thumbnails().set(
+                    videoId=vid,
+                    media_body=MediaFileUpload(thumb_path, mimetype="image/jpeg"),
+                ).execute()
+                print(f"    Thumbnail set ✅ ({thumb_path})")
+            except Exception as e:
+                print(f"    [!] Thumbnail set fail: {e}")
+                print("        token delete karke dobara run karo (naya scope chahiye: youtube.force-ssl)")
 
     if is_long:
         url = f"https://youtube.com/watch?v={vid}"
     else:
         url = f"https://youtube.com/shorts/{vid}" if vid else "unknown"
-    print(f"    UPLOAD DONE: {url}", flush=True)
+    print(f"    UPLOAD DONE [{cname}]: {url}", flush=True)
     return url
 
 
@@ -147,5 +194,10 @@ if __name__ == "__main__":
     if not os.path.exists(path):
         print("[!] output video nahi mila. Pehle 'python main.py --no-upload' chalao.")
         sys.exit(1)
+    ch = None
+    if "--channel" in sys.argv:
+        idx = sys.argv.index("--channel")
+        if idx + 1 < len(sys.argv):
+            ch = sys.argv[idx + 1]
     print(f"    Uploading: {path}")
-    upload(path, data)
+    upload(path, data, channel=ch)

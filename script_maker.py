@@ -280,9 +280,11 @@ def gemini_call(prompt, attempts=5):
     return None
 
 
-def make_script(topic=None, niche=None):
+def make_script(topic=None, niche=None, n=None, target_min=None):
     """Gemini se fresh script + title + description + tags mangta hai. Fail hone par history fallback.
-    niche=None -> config.json ki niche; niche='...' -> us niche par banao (override)."""
+    niche=None -> config.json ki niche; niche='...' -> us niche par banao (override).
+    n -> sentences count override (channel-specific, e.g. bushcraft 120)
+    target_min -> target duration override"""
     used = load_used_topics()
     used_list = ", ".join(used[-25:]) if used else "none"
     if topic:
@@ -291,8 +293,8 @@ def make_script(topic=None, niche=None):
         topic_line = f'Pick ONE fresh, specific topic inside the niche. Do NOT repeat: {used_list}.'
     lang = CFG["language"]
     niche = (niche or CFG.get("niche", "fascinating history facts from around the world")).strip()
-    n = CFG["sentences_per_video"]
-    target_min = CFG.get("target_duration_minutes") or 10
+    n = n or CFG.get("sentences_per_video", 120)
+    target_min = target_min or (CFG.get("target_duration_minutes") or 10)
     mid1 = max(2, int(n * 0.4))
     mid2 = max(3, int(n * 0.75))
 

@@ -26,7 +26,16 @@ QUEUE = os.path.join(ROOT, "data", "job_queue.json")
 CFG_PATH = os.path.join(ROOT, "config.json")
 
 # ---- Niche presets: keyword -> (niche, default_topic) -----------------------
+# ---- Channel mapping: keyword -> channel (channels.json) --------------------
+CHANNEL_PRESETS = [
+    (["bushcraft", "survival", "camping", "wilderness", "nature", "forest"], "bushcraft"),
+    (["dark history", "darkhistory", "dark", "history", "true crime", "crime", "mystery", "mysteries"], "dark_history"),
+]
+
+# ---- Niche presets: keyword -> (niche, default_topic) -----------------------
 NICHE_PRESETS = [
+    (["bushcraft", "survival", "camping", "wilderness"],
+     "winter bushcraft, wilderness survival, snow shelter building, fire making and cooking in the wild", None),
     (["dark history", "darkhistory", "dark"], "dark history, true crime history, dark and mysterious historical events",
      None),
     (["ancient", "mystery", "mysteries", "unsolved"], "ancient mysteries, unsolved historical mysteries",
@@ -73,11 +82,16 @@ def job_running():
 
 
 def parse_command(raw):
-    """'Aaj Dark History ki 1 video banao' -> {niche, topic, raw}"""
+    """'Aaj Dark History ki 1 video banao' -> {niche, topic, channel, raw}"""
     text = (raw or "").strip()
     lower = text.lower()
     niche_preset = None
     topic_override = None
+    channel = None
+    for kws, _ch in CHANNEL_PRESETS:
+        if any(k in lower for k in kws):
+            channel = _ch
+            break
     for kws, niche, def_topic in NICHE_PRESETS:
         if any(k in lower for k in kws):
             niche_preset = niche
@@ -89,12 +103,14 @@ def parse_command(raw):
     if niche_preset and ("video" in bare or not bare):
         bare = ""
     topic = topic_override or (bare or None)
-    return {"raw": raw, "niche": niche_preset, "topic": topic, "text": bare}
+    return {"raw": raw, "niche": niche_preset, "topic": topic, "channel": channel, "text": bare}
 
 
 def spawn_job(job):
     """main.py --no-upload spawn karo (review pehle, upload baad confirm par)."""
     cmd = [sys.executable, "main.py", "--no-upload"]
+    if job.get("channel"):
+        cmd += ["--channel", job["channel"]]
     if job.get("topic"):
         cmd += ["--topic", job["topic"]]
     if job.get("niche"):
@@ -112,8 +128,8 @@ def run_command(raw, count=1):
     q = load_queue()
     jobs = []
     for _ in range(count):
-        job = {"topic": parsed["topic"], "niche": parsed["niche"], "raw": raw,
-               "queued_at": datetime.datetime.now().isoformat(), "status": "queued"}
+        job = {"topic": parsed["topic"], "niche": parsed["niche"], "channel": parsed.get("channel"),
+               "raw": raw, "queued_at": datetime.datetime.now().isoformat(), "status": "queued"}
         running = job_running()
         if running:
             q.append(job)

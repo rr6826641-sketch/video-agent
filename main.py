@@ -4,11 +4,17 @@ Run:
     python main.py --no-upload          (sirf banao, upload nahi)
     python main.py --count 3            (3 videos ek saath)
     python main.py --topic "ocean facts" (khaas topic pe banao)
+    python main.py --channel bushcraft  (channel-specific settings: niche, voice, tags, upload account)
+    python main.py --channel dark_history
     python main.py --language Urdu      (language override)
     python main.py --no-cleanup         (clips folder delete mat karo)
     python main.py --out "my.mp4"       (output file ka naam)
+    python main.py --sentences 15       (quick test: sirf 15 sentences ka chhota video)
+
+2-CHANNEL SAFETY: har channel (channels.json) ka apna OAuth account + token hota hai;
+video last_video_info.json mein apna channel likhti hai aur uploader wahi credentials use karta hai.
 """
-import json, os, sys, time, traceback, datetime
+import json, os, sys, time, traceback, datetime, shutil
 
 # Windows console (cp1252) emoji/unicode par crash karta hai — UTF-8 force karo
 for _stream in (sys.stdout, sys.stderr):
@@ -23,6 +29,7 @@ LOG_DIR = "logs"
 os.makedirs(LOG_DIR, exist_ok=True)
 
 CFG = json.load(open("config.json", encoding="utf-8"))
+CHANNELS_CFG = json.load(open("channels.json", encoding="utf-8"))
 AUTO_UPLOAD = bool(CFG.get("upload_automatically", True))
 
 
@@ -36,19 +43,41 @@ def log(msg):
         fh.write(line + "\n")
 
 
-def build_one(upload_enabled=True, topic=None, out_path=None, cleanup=True, niche=None):
+def resolve_channel(channel):
+    """channel naam -> (channel_obj, effective_cfg). Invalid channel = FORCE fail."""
+    channels = CHANNELS_CFG.get("channels", {})
+    if not channel:
+        channel = CHANNELS_CFG.get("default_channel", "default")
+    if channel not in channels:
+        raise ValueError(f"[!] Channel '{channel}' channels.json mein nahi hai. Available: {list(channels)}")
+    return channel, channels[channel]
+
+
+def build_one(upload_enabled=True, topic=None, out_path=None, cleanup=True, niche=None, channel=None, sentences=None):
     log("=" * 50)
     log(f"VIDEO AGENT v2 — {datetime.datetime.now().strftime('%d %b %Y %H:%M')}")
     log("=" * 50)
 
+    # ---- channel overlay (agar --channel diya ho) ----
+    ch_label = "default(config.json)"
+    ch = None
+    if channel:
+        channel, ch = resolve_channel(channel)
+        niche = (ch.get("niche") or niche or CFG.get("niche"))
+        ch_label = f"{ch.get('name', channel)} ({channel})"
+    log(f"    Channel: {ch_label}")
+    n_sent = sentences or (ch or {}).get("sentences_per_video") or CFG.get("sentences_per_video", 120)
+    tgt_min = (ch or {}).get("target_duration_minutes") or CFG.get("target_duration_minutes")
+    ch_voice = (ch or {}).get("voice") or CFG.get("voice")
+
     log("[1/6] Script likhi ja rahi hai (Gemini)...")
-    script_data = script_maker.make_script(topic, niche=niche)
+    script_data = script_maker.make_script(topic, niche=niche, n=n_sent, target_min=tgt_min)
     log(f"    Topic: {script_data.get('topic', '?')}")
     log(f"    Title: {script_data.get('title', '?')}")
 
     log("[2/6] Voiceover ban raha hai (Edge-TTS free neural voice)...")
     prefix = "v" + datetime.datetime.now().strftime("%H%M%S")
-    audio_files = voice.synthesize(script_data["sentences"], prefix=prefix)
+    audio_files = voice.synthesize(script_data["sentences"], voice=ch_voice, prefix=prefix)
     total_dur = sum(d for _, d in audio_files)
     log(f"    Total voiceover: {total_dur:.0f} seconds")
 
@@ -56,9 +85,8 @@ def build_one(upload_enabled=True, topic=None, out_path=None, cleanup=True, nich
     voiceover_path, voicedur = voice.merge_voiceover(audio_files, out_path=f"audio/voiceover_{prefix}.mp3")
     log(f"    Voiceover (with pauses): {voicedur:.0f} seconds")
 
-    target_min = CFG.get("target_duration_minutes")
-    if target_min and voicedur < target_min * 60 * 0.95:
-        log(f"    [!] Warning: video sirf {voicedur:.0f}s hai — target {target_min} min se kam. sentences_per_video badhao ya dobara run karo.")
+    if tgt_min and voicedur < tgt_min * 60 * 0.95:
+        log(f"    [!] Warning: video sirf {voicedur:.0f}s hai — target {tgt_min} min se kam. sentences_per_video badhao ya dobara run karo.")
 
     if not out_path:
         ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -85,10 +113,22 @@ def build_one(upload_enabled=True, topic=None, out_path=None, cleanup=True, nich
         raise RuntimeError("[!] Render 2 attempts ke baad bhi fail — machine memory kam ho sakti hai")
     log(f"    Video ready: {video_path}")
 
+    # per-channel thumbnail copy (uploader per-channel file prefer karta hai)
+    if channel:
+        try:
+            src = os.path.join("output", "thumbnail.jpg")
+            dst = os.path.join("output", f"thumbnail_{channel}.jpg")
+            if os.path.exists(src) and os.path.abspath(src) != os.path.abspath(dst):
+                shutil.copyfile(src, dst)
+                log(f"    Thumbnail (channel copy): {dst}")
+        except Exception as e:
+            log(f"    [!] Thumbnail copy skip: {e}")
+
     # info save (uploader + record ke liye)
     info = dict(script_data)
     info["duration_seconds"] = round(voicedur)
     info["video_file"] = video_path
+    info["channel"] = channel or "default"
     info["created"] = datetime.datetime.now().isoformat()
     json.dump(info, open("last_video_info.json", "w", encoding="utf-8"), indent=2, ensure_ascii=False)
 
@@ -103,15 +143,15 @@ def build_one(upload_enabled=True, topic=None, out_path=None, cleanup=True, nich
         log("[UPLOAD] YouTube par ja raha hai...")
         try:
             import uploader
-            url = uploader.upload(video_path, script_data)
+            url = uploader.upload(video_path, script_data, channel=channel)
             info["youtube_url"] = url
             json.dump(info, open("last_video_info.json", "w", encoding="utf-8"), indent=2, ensure_ascii=False)
         except Exception as e:
             log(f"    [!] Upload fail: {e}")
-            log("    client_secrets.json setup karo (README Step 3), phir 'python uploader.py' se dobara try karo")
+            log("    us channel ka client_secrets/token setup karo (README Step 3), phir 'python uploader.py' se dobara try karo")
     else:
         log(f"[UPLOAD] Skip — confirmation pending. Video check karo: {video_path}")
-        log("    Theek ho to 'python uploader.py' chalao (thumbnail ke saath upload hoga)")
+        log("    Theek ho to 'python uploader.py --channel " + (channel or "default") + "' chalao")
 
     # cleanup clips to save disk (sirf agar flag na diya ho) — per-run subfolders bhi
     if cleanup and os.path.isdir("clips"):
@@ -120,7 +160,6 @@ def build_one(upload_enabled=True, topic=None, out_path=None, cleanup=True, nich
             try:
                 p = os.path.join("clips", f)
                 if os.path.isdir(p):
-                    import shutil
                     shutil.rmtree(p, ignore_errors=True)
                 else:
                     os.remove(p)
@@ -139,6 +178,8 @@ def parse_args(argv):
         "language": None,
         "cleanup": "--no-cleanup" not in argv,
         "out": None,
+        "channel": None,
+        "sentences": None,
     }
     if "--count" in argv:
         idx = argv.index("--count")
@@ -165,6 +206,13 @@ def parse_args(argv):
         else:
             print("[!] --niche ke baad niche do, e.g. --niche \"dark history facts\"")
             sys.exit(1)
+    if "--channel" in argv:
+        idx = argv.index("--channel")
+        if idx + 1 < len(argv) and not argv[idx + 1].startswith("--"):
+            opts["channel"] = argv[idx + 1]
+        else:
+            print("[!] --channel ke baad channel do: bushcraft | dark_history")
+            sys.exit(1)
     if "--language" in argv:
         idx = argv.index("--language")
         if idx + 1 < len(argv) and not argv[idx + 1].startswith("--"):
@@ -173,6 +221,17 @@ def parse_args(argv):
         idx = argv.index("--out")
         if idx + 1 < len(argv) and not argv[idx + 1].startswith("--"):
             opts["out"] = argv[idx + 1]
+    if "--sentences" in argv:
+        idx = argv.index("--sentences")
+        if idx + 1 < len(argv) and not argv[idx + 1].startswith("--"):
+            try:
+                opts["sentences"] = max(6, min(200, int(argv[idx + 1])))
+            except ValueError:
+                print("[!] --sentences ke baad number do, e.g. --sentences 15")
+                sys.exit(1)
+        else:
+            print("[!] --sentences ke baad number do, e.g. --sentences 15")
+            sys.exit(1)
     return opts
 
 
@@ -188,11 +247,16 @@ if __name__ == "__main__":
         _json.dump(_cfg, open("config.json", "w", encoding="utf-8"), indent=2, ensure_ascii=False)
         print(f"    language set: {opts['language']}")
 
+    # channel pehle validate kar lo (galat naam = turant error, baad mein nahi)
+    if opts["channel"]:
+        _, _ = resolve_channel(opts["channel"])
+
     for i in range(opts["count"]):
         log(f"--- Video {i + 1}/{opts['count']} ---")
         try:
             build_one(opts["upload_enabled"], topic=opts["topic"], out_path=opts["out"],
-                      cleanup=opts["cleanup"], niche=opts.get("niche"))
+                      cleanup=opts["cleanup"], niche=opts.get("niche"), channel=opts["channel"],
+                      sentences=opts["sentences"])
         except SystemExit:
             raise
         except Exception:
