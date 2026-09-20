@@ -634,7 +634,8 @@ def make_video(script_data, audio_files, voiceover_path, out_path="output/final.
     list_file = os.path.join(CLIPS_DIR, "concat_list.txt")
     with open(list_file, "w", encoding="utf-8") as fh:
         for pth in seg_paths:
-            fh.write("file '" + pth.replace("\\", "/").replace("'", "'\\''") + "'\n")
+            ap = os.path.abspath(pth).replace("\\", "/").replace("'", "'\''")
+            fh.write("file '" + ap + "'\n")
     _ffmpeg(["-y", "-f", "concat", "-safe", "0", "-i", list_file, "-c", "copy", concat_path])
 
     print("    Audio mix (voiceover + music, intro sync)...", flush=True)
