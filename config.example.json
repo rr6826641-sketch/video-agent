@@ -21,6 +21,17 @@
   "progress_bar": true,
   "ken_burns": true,
   "fade": true,
+  "cinematic": {
+    "caption_box": true,
+    "letterbox": true,
+    "letterbox_height_pct": 8,
+    "color_grade": 1.12,
+    "scene_styles": true,
+    "intro_card": true,
+    "intro_duration": 2.5,
+    "outro_card": true,
+    "outro_duration": 3.0
+  },
   "youtube": {
     "privacy": "unlisted",
     "category_id": "27",

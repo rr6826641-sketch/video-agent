@@ -14,6 +14,10 @@ from PIL import Image, ImageDraw, ImageFont
 from moviepy import (VideoFileClip, AudioFileClip, ImageClip, CompositeVideoClip,
                      concatenate_videoclips, CompositeAudioClip)
 from moviepy.video.fx import FadeIn, FadeOut
+try:
+    from moviepy.video.fx import Colorx as _Colorx
+except Exception:
+    _Colorx = None
 from moviepy.audio.fx import AudioFadeIn, AudioFadeOut
 
 CFG = json.load(open("config.json", encoding="utf-8"))
@@ -34,6 +38,21 @@ ACTIVE_COLOR = "#FFD400"
 FONT_SIZE = max(46, min(110, int(64 * W / 1080)))   # 1080-wide → 64, 1920-wide → 110
 SUB_MARGIN = 90 if LANDSCAPE else 330               # captions neeche ka gap
 _bar_cache = {}
+
+# ---- CapCut Pro-style cinematic engine (config.json: "cinematic": {...}) ----
+CINE = CFG.get("cinematic", {})
+CAPTION_BOX = bool(CINE.get("caption_box", True))          # text ke peeche rounded box
+LETTERBOX = bool(CINE.get("letterbox", True))              # cinematic 2.35:1 black bars
+BAR_PCT = max(0.0, min(0.15, float(CINE.get("letterbox_height_pct", 8)) / 100.0))
+BAR_H = int(H * BAR_PCT)                                    # ek bar ki height (px)
+COLOR_GRADE = float(CINE.get("color_grade", 1.12))         # per-clip saturation boost
+SCENE_STYLES = bool(CINE.get("scene_styles", True))        # 4 rotating Ken Burns styles
+INTRO_CARD = bool(CINE.get("intro_card", True))
+INTRO_DUR = float(CINE.get("intro_duration", 2.5))
+OUTRO_CARD = bool(CINE.get("outro_card", True))
+OUTRO_DUR = float(CINE.get("outro_duration", 3.0))
+CARDS_SEP = " — "
+_CH = json.load(open("channels.json", encoding="utf-8")) if os.path.exists("channels.json") else {}
 
 
 def find_font():
@@ -56,24 +75,52 @@ def _font(size=FONT_SIZE):
 
 
 # ---------------------------------------------------------------- subtitles
+def wrap_by_pixels(draw, text, font, maxw):
+    """Text ko pixels ke hisaab se wrap karo (font-size independent)."""
+    words, lines, cur = text.split(), [], ""
+    for w in words:
+        trial = (cur + " " + w).strip()
+        if draw.textlength(trial, font=font) <= maxw or not cur:
+            cur = trial
+        else:
+            lines.append(cur)
+            cur = w
+    if cur:
+        lines.append(cur)
+    return lines
+
+
 def render_subtitle(text, font_size=FONT_SIZE):
-    """Static caption: poora sentence, white text + black outline."""
+    """Static caption: poora sentence, white text + black outline.
+    CapCut Pro style: CAPTION_BOX on = rounded semi-transparent box behind text."""
     font = _font(font_size)
-    wrapped = textwrap.fill(text, width=24)
-    img = Image.new("RGBA", (W - 80, 500), (0, 0, 0, 0))
+    maxw = W - 120
+    img = Image.new("RGBA", (W - 40, 500), (0, 0, 0, 0))
     draw = ImageDraw.Draw(img)
-    y = 10
-    for line in wrapped.split("\n"):
-        bbox = draw.textbbox((0, 0), line, font=font)
-        draw.text((10, y), line, font=font, fill="white",
+    lines = wrap_by_pixels(draw, text, font, maxw)
+    line_h = int(font_size * 1.32)
+    # measure block width
+    widths = [draw.textlength(ln, font=font) for ln in lines]
+    block_w = int(max(widths)) + 56
+    block_h = len(lines) * line_h + 40
+    bx0 = (img.width - block_w) // 2
+    by0 = 10
+    if CAPTION_BOX:
+        draw.rounded_rectangle([bx0, by0, bx0 + block_w, by0 + block_h],
+                               radius=22, fill=(8, 8, 12, 145),
+                               outline=(255, 255, 255, 26), width=2)
+    y = by0 + 20
+    for i, ln in enumerate(lines):
+        x = (img.width - widths[i]) // 2
+        draw.text((x, y), ln, font=font, fill="white",
                   stroke_width=6, stroke_fill="black")
-        y += (bbox[3] - bbox[1]) + int(font_size * 0.45)
-    final = img.crop((0, 0, W - 80, min(y + 20, 500)))
-    return final
+        y += line_h
+    return img.crop((0, 0, img.width, min(by0 + block_h + 10, 500)))
 
 
 def render_wordpop(words, active_idx, font_size=FONT_SIZE):
-    """Word-by-word caption: active word yellow, baqi white, centered."""
+    """Word-by-word karaoke caption (CapCut Pro style):
+    past words grey, active word yellow + underline bar, upcoming white, rounded box."""
     font = _font(font_size)
     maxw = W - 100
     space_w = font.getlength(" ")
@@ -99,14 +146,22 @@ def render_wordpop(words, active_idx, font_size=FONT_SIZE):
         tw = sum(font.getlength(w) for w in line_words) + space_w * (len(line_words) - 1)
         return (maxw - tw) / 2 + 10
 
-    # pehle non-active white (neechay), phir active yellow (upar) — stroke overlap se bachne ke liye
+    if CAPTION_BOX:
+        draw.rounded_rectangle([2, 2, maxw + 18, height - 2], radius=20,
+                               fill=(8, 8, 12, 145), outline=(255, 255, 255, 26), width=2)
+    # past = grey, active = yellow + underline bar, upcoming = white (CapCut karaoke)
     idx = 0
     for li, line_words in enumerate(lines):
         x = line_layout(line_words)
         y = 12 + li * line_h
         for w in line_words:
-            if idx != active_idx:
-                draw.text((x, y), w, font=font, fill="white",
+            fill = "white"
+            if idx < active_idx:
+                fill = "#A8ADB8"
+            elif idx == active_idx:
+                fill = ACTIVE_COLOR
+            if fill != ACTIVE_COLOR:
+                draw.text((x, y), w, font=font, fill=fill,
                           stroke_width=5, stroke_fill="black")
             x += font.getlength(w) + space_w
             idx += 1
@@ -118,6 +173,11 @@ def render_wordpop(words, active_idx, font_size=FONT_SIZE):
             if idx == active_idx:
                 draw.text((x, y), w, font=font, fill=ACTIVE_COLOR,
                           stroke_width=5, stroke_fill="black")
+                ww = font.getlength(w)
+                bar_y = y + int(font_size * 1.18)
+                draw.rounded_rectangle([x - 2, bar_y, x + ww + 2, bar_y + 7], radius=3,
+                                       fill=ACTIVE_COLOR)
+                break
             x += font.getlength(w) + space_w
             idx += 1
     return img
@@ -143,16 +203,34 @@ def progress_bar_png(frac):
 
 
 # ------------------------------------------------------------------- clips
-def _kenburns(clip, duration):
-    """Slow pan/zoom feel: clip ko 6% bara karo aur halka sa move karo."""
+def _kenburns(clip, duration, seed=0):
+    """CapCut-style dynamic camera: 4 styles rotate (zoom-in / zoom-out / pan-LR / pan-RL).
+    Har scene ko apna motion milta hai — flat slideshow feel khatam."""
     if not (KEN_BURNS and duration >= 1.5):
         return clip.with_position("center")
-    zoom = 1.06
+    mode = (seed if SCENE_STYLES else 0) % 4
+    zoom = 1.10
     c = clip.resized(height=int(H * zoom))
-    extra = (H * zoom - H) / 2.0
+    ex = (H * zoom - H) / 2.0
 
-    def pos(t, _d=duration, _extra=extra):
-        return ("center", -_extra + _extra * (1 - t / _d))
+    if mode == 0:      # zoom-in feel: upar se neeche settle
+        def pos(t, _d=duration, _ex=ex):
+            return ("center", -_ex + _ex * (t / _d))
+    elif mode == 1:    # zoom-out feel: neeche se upar reveal
+        def pos(t, _d=duration, _ex=ex):
+            return ("center", _ex - _ex * (t / _d))
+    elif mode == 2:    # pan left -> right
+        c2 = clip.resized(width=int(W * (zoom + 0.04))).cropped(x_center=W * (zoom + 0.04) / 2, height=H)
+        ex2 = (c2.w - W) / 2.0
+        def pos2(t, _d=duration, _ex=ex2):
+            return (-_ex + 2 * _ex * (t / _d), "center")
+        return c2.with_position(pos2)
+    else:              # pan right -> left
+        c2 = clip.resized(width=int(W * (zoom + 0.04))).cropped(x_center=W * (zoom + 0.04) / 2, height=H)
+        ex2 = (c2.w - W) / 2.0
+        def pos3(t, _d=duration, _ex=ex2):
+            return (_ex - 2 * _ex * (t / _d), "center")
+        return c2.with_position(pos3)
 
     return c.with_position(pos)
 
@@ -171,7 +249,7 @@ def make_gradient_clip(index, duration):
     p = os.path.join(CLIPS_DIR, f"bg_{index:03d}.png")
     img.save(p)
     clip = ImageClip(p).with_duration(duration)
-    return _kenburns(clip, duration).with_duration(duration)
+    return _kenburns(clip, duration, index).with_duration(duration)
 
 
 def fetch_pexels_clip(keyword, index, attempts=2):
@@ -217,8 +295,9 @@ def fetch_pexels_clip(keyword, index, attempts=2):
     return None
 
 
-def fit_clip(clip, duration):
-    """Clip ko W x H mein crop/resize, duration tak loop/trim, + ken burns."""
+def fit_clip(clip, duration, seed=0):
+    """Clip ko W x H mein crop/resize, duration tak loop/trim, +
+    dynamic ken burns + color grade (CapCut-style punch)."""
     c = clip
     if c.duration is None or c.duration < duration:
         c = c.loop(duration=duration)
@@ -229,7 +308,12 @@ def fit_clip(clip, duration):
         c = c.resized(height=H).cropped(x_center=c.w / 2, width=W)
     else:
         c = c.resized(width=W).cropped(y_center=c.h / 2, height=H)
-    return _kenburns(c, duration).with_duration(duration)
+    if _Colorx is not None and COLOR_GRADE != 1.0:
+        try:
+            c = c.with_effects([_Colorx(COLOR_GRADE)])
+        except Exception:
+            pass
+    return _kenburns(c, duration, seed).with_duration(duration)
 
 
 # --------------------------------------------------------------- thumbnail
@@ -256,6 +340,87 @@ def _ffmpeg(args):
                        capture_output=True, text=True)
     if r.returncode != 0:
         raise RuntimeError("ffmpeg fail: " + (r.stderr or r.stdout or "")[-2000:])
+
+
+# ---------------------------------------------------------------- cards
+_bar_png_cache = {}
+
+
+def _bar_png(name):
+    """Letterbox black bar PNG (cached)."""
+    if name in _bar_png_cache:
+        return _bar_png_cache[name]
+    if name == "bar_top":
+        img = Image.new("RGB", (W, BAR_H), (0, 0, 0))
+    else:
+        img = Image.new("RGB", (W, BAR_H), (0, 0, 0))
+    p = os.path.join(CLIPS_DIR, name + ".png")
+    img.save(p)
+    _bar_png_cache[name] = p
+    return p
+
+
+def letterbox_layers(dur):
+    """Cinematic top+bottom black bars (CapCut 2.35:1 vibe)."""
+    if not (LETTERBOX and BAR_H > 0):
+        return []
+    top = ImageClip(_bar_png("bar_top")).with_duration(dur).with_position((0, 0))
+    bot = ImageClip(_bar_png("bar_bot")).with_duration(dur).with_position((0, H - BAR_H))
+    return [top, bot]
+
+
+def make_card_png(kind, title, sub=""):
+    """Intro/outro full-screen card (CapCut template-style): dark gradient +
+    accent bar + bada bold title + channel line. Return PNG path."""
+    img = Image.new("RGB", (W, H), (8, 10, 16))
+    d = ImageDraw.Draw(img)
+    for y in range(H):
+        t = y / H
+        c = (int(10 + 22 * (1 - t)), int(12 + 18 * (1 - t)), int(26 + 52 * (1 - t)))
+        d.line([(0, y), (W, y)], fill=c)
+    m = int(W * 0.10)
+    d.rounded_rectangle([m, int(H * 0.30), W - m, H - int(H * 0.30)],
+                        radius=28, outline=(255, 255, 255, 60), width=3)
+    if kind == "intro":
+        head = sub or "WILD STORIES"
+        big = title or "Cinematic Story"
+    else:
+        head = "THANK YOU FOR WATCHING"
+        big = (sub or "SUBSCRIBE").upper() if not sub else sub.upper()
+    hf = _font(int(H * 0.055))
+    d.text((W / 2, int(H * 0.375)), head, font=hf, fill=ACTIVE_COLOR,
+           anchor="mm", stroke_width=2, stroke_fill="black")
+    bf = _font(int(H * 0.075))
+    lines = wrap_by_pixels(d, big, bf, W - int(W * 0.1))
+    y = int(H * 0.47)
+    lh = int(H * 0.10)
+    for ln in lines:
+        d.text((W / 2, y), ln, font=bf, fill="white", anchor="mm",
+               stroke_width=4, stroke_fill="black")
+        y += lh
+    if kind == "outro":
+        sf = _font(int(H * 0.038))
+        d.text((W / 2, H - int(H * 0.19)), "Agar video pasand aaye to LIKE + SUBSCRIBE karein",
+               font=sf, fill="#E8E8E8", anchor="mm", stroke_width=1, stroke_fill="black")
+    p = os.path.join(CLIPS_DIR, f"card_{kind}_{time.strftime('%H%M%S')}.png")
+    img.save(p)
+    return p
+
+
+def make_card_seg(idx, kind, title, sub="", dur=2.5):
+    """Card PNG ko ek silent seg.mp4 mein render karo (body segs jaisi hi coding)."""
+    png = make_card_png(kind, title, sub)
+    seg_path = os.path.join(CLIPS_DIR, f"card_seg_{idx:02d}.mp4")
+    clip = ImageClip(png).with_duration(dur)
+    clip.write_videofile(seg_path, fps=30, codec="libx264", preset="veryfast",
+                         threads=min(4, os.cpu_count() or 2), audio=False,
+                         logger=None, ffmpeg_params=["-crf", "19", "-pix_fmt", "yuv420p"])
+    clip.close()
+    try:
+        os.remove(png)
+    except Exception:
+        pass
+    return seg_path
 
 
 def make_thumbnail(video_path, title, out_path="output/thumbnail.jpg"):
@@ -317,16 +482,17 @@ def make_video(script_data, audio_files, voiceover_path, out_path="output/final.
     print("[5/6] Segments render ho rahe hain (memory-safe, 1 segment at a time)...")
     seg_paths = []
     t = 0.0
+    sub_margin = max(SUB_MARGIN, BAR_H + 40)   # captions letterbox bar ke upar rahein
     for i, (apath, dur) in enumerate(audio_files):
         seg = dur + (PAUSE if i < total - 1 else 0.0)
         if clip_paths[i] and os.path.exists(clip_paths[i]):
             try:
-                bg = fit_clip(VideoFileClip(clip_paths[i]), seg)
+                bg = fit_clip(VideoFileClip(clip_paths[i]), seg, i)
             except Exception:
                 bg = make_gradient_clip(i, seg)
         else:
             bg = make_gradient_clip(i, seg)
-        layers = [bg]
+        layers = [bg] + letterbox_layers(seg)
         pngs = []
         if CAPTION_STYLE == "wordpop":
             words = sentences[i].split()
@@ -341,10 +507,10 @@ def make_video(script_data, audio_files, voiceover_path, out_path="output/final.
                 img.save(p)
                 pngs.append(p)
                 layers.append(ImageClip(p).with_start(start - t + 0.02).with_duration(wlen)
-                              .with_position(("center", H - img.height - SUB_MARGIN)))
+                              .with_position(("center", H - img.height - sub_margin)))
                 if SHOW_PROGRESS:
                     bar = ImageClip(progress_bar_png((start + wlen / 2) / total_dur)) \
-                        .with_start(start - t).with_duration(wlen).with_position((0, 0))
+                        .with_start(start - t).with_duration(wlen).with_position((0, BAR_H + 4))
                     layers.append(bar)
         else:
             img = render_subtitle(sentences[i])
@@ -352,10 +518,10 @@ def make_video(script_data, audio_files, voiceover_path, out_path="output/final.
             img.save(p)
             pngs.append(p)
             layers.append(ImageClip(p).with_start(0.05).with_duration(dur)
-                          .with_position(("center", H - img.height - SUB_MARGIN)))
+                          .with_position(("center", H - img.height - sub_margin)))
             if SHOW_PROGRESS:
                 bar = ImageClip(progress_bar_png((t + seg / 2) / total_dur)) \
-                    .with_start(0).with_duration(seg).with_position((0, 0))
+                    .with_start(0).with_duration(seg).with_position((0, BAR_H + 4))
                 layers.append(bar)
         t += seg
         seg_path = os.path.join(CLIPS_DIR, f"seg_{i:03d}.mp4")
@@ -390,6 +556,20 @@ def make_video(script_data, audio_files, voiceover_path, out_path="output/final.
         seg_paths.append(seg_path)
         print(f"    seg {i + 1}/{total} done ({seg:.1f}s)", flush=True)
 
+    # CapCut-style intro + outro cards (body ke aage/peeche)
+    pad_in = INTRO_DUR if INTRO_CARD else 0.0
+    pad_out = OUTRO_DUR if OUTRO_CARD else 0.0
+    vtitle = script_data.get("title", "")
+    vsub = ""
+    if _CH.get("channels") and channel:
+        vsub = _CH["channels"].get(channel, {}).get("name") or ""
+    if INTRO_CARD:
+        print("    Intro card render...", flush=True)
+        seg_paths.insert(0, make_card_seg(-1, "intro", vtitle, vsub, INTRO_DUR))
+    if OUTRO_CARD:
+        print("    Outro card render...", flush=True)
+        seg_paths.append(make_card_seg(999, "outro", "", vsub or "SUBSCRIBE", OUTRO_DUR))
+
     print("    Segments concat ho rahe hain (ffmpeg -c copy)...", flush=True)
     concat_path = os.path.join("audio", "concat_video.mp4")
     list_file = os.path.join(CLIPS_DIR, "concat_list.txt")
@@ -398,7 +578,8 @@ def make_video(script_data, audio_files, voiceover_path, out_path="output/final.
             fh.write("file '" + pth.replace("\\", "/").replace("'", "'\\''") + "'\n")
     _ffmpeg(["-y", "-f", "concat", "-safe", "0", "-i", list_file, "-c", "copy", concat_path])
 
-    print("    Audio mix (voiceover + music)...", flush=True)
+    print("    Audio mix (voiceover + music, intro sync)...", flush=True)
+    video_dur = pad_in + total_dur + pad_out
     voice = AudioFileClip(voiceover_path)
     use_voice = voice
     if FADE:
@@ -406,15 +587,17 @@ def make_video(script_data, audio_files, voiceover_path, out_path="output/final.
             use_voice = voice.with_effects([AudioFadeIn(0.1), AudioFadeOut(0.3)])
         except Exception:
             use_voice = voice
+    if pad_in > 0:
+        use_voice = use_voice.with_start(pad_in)   # voiceover intro card ke baad shuru
     audio_parts = [use_voice]
     music_file = CFG.get("background_music")
     vol = CFG.get("music_volume", 0.12)
     if music_file and os.path.exists(music_file):
         try:
             music = AudioFileClip(music_file)
-            if music.duration < total_dur:
-                music = music.loop(duration=total_dur)
-            music = music.subclipped(0, total_dur).with_volume_scaled(vol)
+            if music.duration < video_dur:
+                music = music.loop(duration=video_dur)
+            music = music.subclipped(0, video_dur).with_volume_scaled(vol)
             if FADE:
                 music = music.with_effects([AudioFadeOut(2.0)])
             audio_parts.append(music)
@@ -423,8 +606,10 @@ def make_video(script_data, audio_files, voiceover_path, out_path="output/final.
     mix_path = os.path.join("audio", "mix_full.mp3")
     if len(audio_parts) == 1:
         final_audio = use_voice
+        if pad_in > 0:
+            final_audio = CompositeAudioClip([use_voice]).with_duration(video_dur)
     else:
-        final_audio = CompositeAudioClip(audio_parts).with_duration(total_dur)
+        final_audio = CompositeAudioClip(audio_parts).with_duration(video_dur)
     final_audio.write_audiofile(mix_path, fps=44100, logger=None)
     try:
         voice.close()

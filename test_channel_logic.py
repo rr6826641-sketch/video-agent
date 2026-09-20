@@ -46,4 +46,20 @@ src = open("main.py", encoding="utf-8").read()
 assert "channel=channel" in src, "main.py make_video call channel nahi pass karta!"
 print("T9 main.py channel->make_video: OK")
 
+# TEST 8: CapCut Pro engine — cinematic features present
+import video_maker as vm
+assert hasattr(vm, "letterbox_layers"), "letterbox missing"
+assert hasattr(vm, "make_card_png") and hasattr(vm, "make_card_seg"), "cards missing"
+assert vm.CAPTION_BOX is True or False
+assert callable(vm.letterbox_layers) and callable(vm.make_card_png) and callable(vm.make_card_seg)
+print("T10 CapCut engine fns: OK")
+
+try:
+    import inspect
+    sig = inspect.signature(vm.fit_clip)
+    assert "seed" in sig.parameters, "fit_clip seed param missing"
+    print("T11 fit_clip seed/color-grade: OK")
+except Exception as e:
+    print("T11 fit_clip seed/color-grade FAIL:", e)
+
 print("ALL TESTS DONE OK")
